@@ -72,7 +72,8 @@ module.exports = {
             fs.writeFileSync(tempGif, gifBuffer);
 
             // Step 2: Convert GIF to MP4 using FFmpeg
-            const command = `ffmpeg -i "${tempGif}" -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${tempMp4}" -y`;
+            const ffmpegBin = config.ffmpegPath || 'ffmpeg';
+            const command = `"${ffmpegBin}" -i "${tempGif}" -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${tempMp4}" -y`;
 
             await new Promise((resolve, reject) => {
                 exec(command, (error, stdout, stderr) => {

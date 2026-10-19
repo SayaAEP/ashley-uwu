@@ -81,6 +81,9 @@ module.exports = {
     // Default: 300000 (5 minutes)
     authTimeoutMs: 300000,
 
+    // Path to FFmpeg executable (auto-detected on start if left commented)
+    // ffmpegPath: '',
+    
     // MongoDB connection string for RemoteAuth
     // mongoUri: 'mongodb://localhost:27017/ashley-uwu',
 
