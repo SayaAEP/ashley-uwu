@@ -41,6 +41,8 @@ function isExecutable(p) {
  */
 function testFfmpegCommand(cmd) {
   try {
+    const logger = require("./logger");
+    logger.debug(`Testing FFmpeg command: ${cmd}`);
     execSync(cmd, { stdio: "ignore" });
     return true;
   } catch {
@@ -109,6 +111,7 @@ const CONFIG_PATH = path.join(__dirname, "..", "config.js");
 
 function writeFFmpegPathToConfig(execPath) {
   try {
+    const logger = require("./logger");
     let content = fs.readFileSync(CONFIG_PATH, "utf8");
     const dateStamp = new Date().toISOString();
     const newLine = `    ffmpegPath: "${execPath.replace(/\\/g, "/")}",`;

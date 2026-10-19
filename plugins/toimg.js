@@ -75,10 +75,14 @@ module.exports = {
             const ffmpegBin = config.ffmpegPath || 'ffmpeg';
             const command = `"${ffmpegBin}" -i "${tempGif}" -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${tempMp4}" -y`;
 
+            const logger = require('../utils/logger');
+            logger.debug(`[toimg] Executing FFmpeg: ${command}`);
+
             await new Promise((resolve, reject) => {
                 exec(command, (error, stdout, stderr) => {
                     if (error) {
-                        console.error('[toimg] FFmpeg error:', stderr);
+                        logger.debug(`[toimg] FFmpeg stdout: ${stdout}`);
+                        logger.debug(`[toimg] FFmpeg stderr: ${stderr}`);
                         reject(error);
                     } else {
                         resolve();

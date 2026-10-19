@@ -352,7 +352,11 @@ class PluginHandler {
       await plugin.handler(client, message, args);
       this.setCooldown(senderId, plugin.name);
     } catch (err) {
-      logger.error(`Plugin "${plugin.name}" error:`, err.message);
+      if (config.debug) {
+        logger.error(`Plugin "${plugin.name}" error:`, err);
+      } else {
+        logger.error(`Plugin "${plugin.name}" error:`, err.message);
+      }
       await message.reply('An error occurred while executing that command.');
     }
   }

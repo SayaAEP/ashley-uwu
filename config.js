@@ -94,6 +94,10 @@ module.exports = {
     // Increase this if you have slow upload speeds
     shutdownSaveTimeoutMs: 1200000,
 
+    // ─── Debug Mode ─────────────────────────────────────
+    // Set to true to print full error stack traces
+    debug: true,
+
     // ─── Cooldown ────────────────────────────────────────
     // Delay between commands per user (ms)
     cooldownMs: 3000,

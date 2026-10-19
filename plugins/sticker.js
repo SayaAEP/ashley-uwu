@@ -52,15 +52,30 @@ module.exports = {
         const isImage = media.mimetype && media.mimetype.startsWith('image/');
         const isVideo = media.mimetype && media.mimetype.startsWith('video/');
 
+        const logger = require('../utils/logger');
+        if (isImage) {
+            logger.debug(`[sticker] Processing static image sticker (${media.mimetype})`);
+        } else if (isVideo) {
+            const ffmpegBin = config.ffmpegPath || 'ffmpeg';
+            logger.debug(`[sticker] Processing video sticker via FFmpeg (${ffmpegBin})`);
+        }
+
         if (!isImage && !isVideo) {
             await message.reply('Only images and videos can be converted to stickers.');
             return;
         }
 
-        await client.sendMessage(message.from, media, {
-            sendMediaAsSticker: true,
-            stickerAuthor: stickerAuthor,
-            stickerName: stickerName,
-        });
+        try {
+            logger.debug(`[sticker] Sending media as sticker to ${message.from}...`);
+            await client.sendMessage(message.from, media, {
+                sendMediaAsSticker: true,
+                stickerAuthor: stickerAuthor,
+                stickerName: stickerName,
+            });
+            logger.success(`[sticker] Sticker sent successfully to ${message.from}`);
+        } catch (e) {
+            logger.error(`[sticker] Failed to send sticker:`, e);
+            throw e;
+        }
     },
 };
