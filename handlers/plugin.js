@@ -1,8 +1,6 @@
 /**
- * Ashley UwU — Plugin System
- * Auto-loads all .js files from the plugins/ folder
- * Handles command parsing, permission checks, cooldowns,
- * and hot-reload (watches for file changes)
+ * Plugin System — auto-loads plugins/, handles commands, permissions,
+ * cooldowns, and hot-reload.
  */
 
 const fs = require('fs');
@@ -33,7 +31,7 @@ class PluginHandler {
   // ─── Plugin Loading ──────────────────────────────────
 
   /**
-   * Load all plugins from the plugins/ directory, then start watching
+   * Load all plugins from plugins/ directory, then start watching
    */
   loadPlugins() {
     // Create plugins directory if it doesn't exist
@@ -74,7 +72,6 @@ class PluginHandler {
   /**
    * Load a single plugin file by filename
    * @param {string} filename - e.g. 'sticker.js'
-   * @returns {boolean} true if loaded successfully
    */
   loadSinglePlugin(filename) {
     const filePath = path.join(PLUGINS_DIR, filename);
@@ -112,9 +109,9 @@ class PluginHandler {
   }
 
   /**
-   * Unload a plugin by its source filename
+   * Unload a plugin by source filename
    * @param {string} filename - e.g. 'sticker.js'
-   * @returns {boolean} true if unloaded successfully
+   * @returns {boolean} true if unloaded
    */
   unloadPlugin(filename) {
     const pluginName = this.fileToPlugin.get(filename);
@@ -150,7 +147,7 @@ class PluginHandler {
   // ─── Hot-Reload Watcher ──────────────────────────────
 
   /**
-   * Watch the plugins/ directory for changes and auto-reload
+   * Watch plugins/ directory for changes and auto-reload
    */
   watchPlugins() {
     if (!fs.existsSync(PLUGINS_DIR)) return;
@@ -352,7 +349,11 @@ class PluginHandler {
       await plugin.handler(client, message, args);
       this.setCooldown(senderId, plugin.name);
     } catch (err) {
-      logger.error(`Plugin "${plugin.name}" error:`, err.message);
+      if (config.debug) {
+        logger.error(`Plugin "${plugin.name}" error:`, err);
+      } else {
+        logger.error(`Plugin "${plugin.name}" error:`, err.message);
+      }
       await message.reply('An error occurred while executing that command.');
     }
   }

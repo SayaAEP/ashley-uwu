@@ -1,16 +1,19 @@
 /**
- * Ashley UwU — WhatsApp Bot Core
- *
- * Client initialization, authentication,
- * and message routing through the plugin system.
+ * WhatsApp Bot Core — client init, auth, and message routing via plugin system.
  */
 
 const { Client, LocalAuth, NoAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
+const { loadEnv } = require("./utils/env");
+
+// Load .env first so env values take priority over config.js
+loadEnv();
+
 const config = require("./config");
 const logger = require("./utils/logger");
 const pluginHandler = require("./handlers/plugin");
 const { resolveChromiumPath } = require("./utils/chromium");
+const { resolveFFmpegPath } = require("./utils/ffmpeg");
 
 // ─── Load Plugins ────────────────────────────────────────
 pluginHandler.loadPlugins();
@@ -72,24 +75,17 @@ async function createAuthStrategy() {
 async function boot() {
   const authStrategy = await createAuthStrategy();
 
-  // Resolve Chromium path (auto-detect on Linux, bundled on Windows)
-  const chromiumPath = resolveChromiumPath(config);
-
-  // Check for FFmpeg (required for sticker conversion)
+  // Resolve Chromium path (.env > config.js > browser-bin/ > system)
+  let chromiumPath;
   try {
-    const { execSync } = require("child_process");
-    const isWin = process.platform === "win32";
-    const cmd = isWin ? "where ffmpeg" : "which ffmpeg";
-    execSync(cmd, { stdio: "ignore" });
-  } catch {
-    logger.warn("FFmpeg was not found in your system PATH.");
-    logger.warn("Sticker and media conversion (.sticker / .toimg) will fail!");
-    logger.warn(
-      process.platform === "win32"
-        ? "Please install FFmpeg and add it to your Windows System PATH."
-        : "Please install FFmpeg:  sudo apt install ffmpeg",
-    );
+    chromiumPath = resolveChromiumPath(config);
+  } catch (err) {
+    logger.error(err.message);
+    process.exit(1);
   }
+
+  // Resolve FFmpeg path (cross-platform auto-detect)
+  resolveFFmpegPath(config);
 
   const puppeteerOpts = {
     headless: true,
