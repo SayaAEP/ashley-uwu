@@ -49,6 +49,16 @@ function afterLog() {
 
 // ─── Logger ────────────────────────────────────────────────
 const logger = {
+  debug(message, ...args) {
+    if (!require('../config').debug) return;
+    beforeLog();
+    console.log(
+      `${colors.gray}${timestamp()}${colors.reset} ${formatTag('DEBG', colors.yellow)} ${colors.yellow}${message}${colors.reset}`,
+      ...args
+    );
+    afterLog();
+  },
+
   info(message, ...args) {
     beforeLog();
     console.log(
@@ -79,9 +89,17 @@ const logger = {
   error(message, ...args) {
     beforeLog();
     console.error(
-      `${colors.gray}${timestamp()}${colors.reset} ${formatTag('ERR!', colors.red)} ${colors.red}${message}${colors.reset}`,
-      ...args
+      `${colors.gray}${timestamp()}${colors.reset} ${formatTag('ERR!', colors.red)} ${colors.red}${message}${colors.reset}`
     );
+    if (args.length > 0) {
+      args.forEach(arg => {
+        if (arg instanceof Error) {
+          console.error(`${colors.red}${arg.stack || arg.message}${colors.reset}`);
+        } else {
+          console.error(arg);
+        }
+      });
+    }
     afterLog();
   },
 

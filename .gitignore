@@ -7,3 +7,10 @@ RemoteAuth*.zip
 wwebjs_temp_session*/
 wwebjs_temp_session_undefined*/
 package-lock.json
+
+# Local environment overrides (machine-specific paths stay private)
+.env
+.env.tmp
+
+# User-supplied browser binaries
+browser-bin/
