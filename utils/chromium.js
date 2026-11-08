@@ -16,6 +16,7 @@ const { execSync } = require("child_process");
 const os = require("os");
 const logger = require("./logger");
 const { getEnv, writeEnvValue } = require("./env");
+const { PROJECT_ROOT, resolveProjectPath } = require("./paths");
 
 // Keywords the user explicitly requested
 const BROWSER_KEYWORDS = ["chrome", "chromium", "ungoogled-chromium"];
@@ -85,7 +86,7 @@ const INCOMPATIBLE_BROWSERS = [
 ];
 
 // Folder where users can drop their own browser binary
-const BROWSER_BIN_DIR = path.join(__dirname, "..", "browser-bin");
+const BROWSER_BIN_DIR = path.join(PROJECT_ROOT, "browser-bin");
 
 // Max depth to search inside browser-bin/<name>/
 const BROWSER_BIN_MAX_DEPTH = 3;
@@ -327,11 +328,18 @@ function writePathToEnv(execPath) {
 /**
  * Find and delete stale `SingletonLock` files in the session directory.
  * Prevents Chromium from hanging on startup after crashes or rapid restarts.
+ *
+ * The caller must already own the instance lock (`utils/sessionLock`), so this
+ * never deletes a lock belonging to another live bot process.
+ *
+ * @param {object} config
  */
 function cleanSingletonLock(config) {
   try {
-    const authPath = config.authDataPath || ".wwebjs_auth";
-    const absoluteAuthPath = path.resolve(process.cwd(), authPath);
+    const absoluteAuthPath = resolveProjectPath(
+      config.authDataPath,
+      resolveProjectPath(".wwebjs_auth"),
+    );
     if (!fs.existsSync(absoluteAuthPath)) return;
 
     const findAndUnlinkLock = (dir) => {
@@ -441,4 +449,4 @@ function resolveChromiumPath(config) {
   );
 }
 
-module.exports = { resolveChromiumPath };
+module.exports = { resolveChromiumPath, cleanSingletonLock };

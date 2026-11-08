@@ -31,6 +31,22 @@ ashley-uwu/
 Puppeteer/Chrome browser cache. Contains downloaded WhatsApp Web assets.
 Can be safely deleted — it regenerates on next start.
 
+### Log Data (terminal / process output)
+
+The bot logs to the console only; it does not create log files by itself.
+Command activity is logged at normal level and includes:
+
+- the command text you (or anyone allowed to use the bot) send,
+- the sender's pushname and, for groups, the group name.
+
+With `DEBUG=true`, logs additionally include connection-state details, extra
+media diagnostics, and error stack traces that may contain message or file
+details.
+
+If you run under PM2, systemd, Docker, or redirect output to a file, those
+platforms may persist the logs. Treat that output as personal data: restrict
+file permissions, rotate/delete it, and turn `DEBUG` off when it is not needed.
+
 ---
 
 ## Security Recommendations

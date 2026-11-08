@@ -44,6 +44,11 @@ const CONFIG_SCHEMA = {
   shutdownSaveTimeoutMs: { env: "SHUTDOWN_SAVE_TIMEOUT_MS", type: "number" },
   debug: { env: "DEBUG", type: "boolean" },
   cooldownMs: { env: "COOLDOWN_MS", type: "number" },
+  mediaConcurrency: { env: "MEDIA_CONCURRENCY", type: "number" },
+  smemeFontPath: { env: "SMEME_FONT_PATH", type: "string" },
+  reconnectBaseDelayMs: { env: "RECONNECT_BASE_DELAY_MS", type: "number" },
+  reconnectMaxDelayMs: { env: "RECONNECT_MAX_DELAY_MS", type: "number" },
+  reconnectMaxAttempts: { env: "RECONNECT_MAX_ATTEMPTS", type: "number" },
 };
 
 /**
@@ -52,7 +57,9 @@ const CONFIG_SCHEMA = {
 const DEFAULTS = {
     // ─── Identity ────────────────────────────────────────
     botName: "Ashley UwU",
-    botVersion: "1.0.2-something_new",
+    // Single source of truth: package.json. BOT_VERSION in .env can still
+    // override this for a one-off local build.
+    botVersion: require("./package.json").version,
     stickerName: "Made with magic sparkle",
 
     // ─── Command Prefixes ────────────────────────────────
@@ -68,7 +75,7 @@ const DEFAULTS = {
     // local  - Session saved to disk (.wwebjs_auth/)
     // remote - Session saved to MongoDB (needs wwebjs-mongo + mongoose)
     // none   - No session persistence, QR scan every restart
-    authStrategy: "",
+    authStrategy: "local",
 
     // Path override for LocalAuth session storage
     // authDataPath: '.wwebjs_auth',
@@ -122,7 +129,6 @@ const DEFAULTS = {
         "--disable-extensions",
         "--disable-plugins",
         "--disable-translate",
-        "--disable-web-security",
         // Low-RAM tweaks:
         "--disable-features=site-per-process", // Saves ~10-15% memory
         "--js-flags=--max-old-space-size=512", // Cap V8 heap at 512MB
@@ -148,7 +154,7 @@ const DEFAULTS = {
     backupSyncIntervalMs: 300000,
 
     // Max time to wait for session upload on shutdown (ms)
-    shutdownSaveTimeoutMs: 1200000,
+    shutdownSaveTimeoutMs: 120000,
 
     // ─── Debug Mode ─────────────────────────────────────
     // Set true to print full error stack traces
@@ -157,6 +163,23 @@ const DEFAULTS = {
     // ─── Cooldown ────────────────────────────────────────
     // Delay between commands per user (ms)
     cooldownMs: 3000,
+
+    // ─── Reconnect ───────────────────────────────────────
+    // When the connection drops, the client is rebuilt with exponential
+    // backoff instead of leaving a dead process running.
+    // 0 attempts = retry forever (recommended for home connections).
+    reconnectBaseDelayMs: 5000,
+    reconnectMaxDelayMs: 60000,
+    reconnectMaxAttempts: 0,
+
+    // ─── Media processing ────────────────────────────────
+    // Maximum simultaneous FFmpeg/sharp jobs. Lower is safer on low-RAM
+    // devices; higher handles bursts faster.
+    mediaConcurrency: 2,
+
+    // Optional custom font for .smeme text. When empty, the bot first tries
+    // assets/ttf/impact.ttf, then the system Impact font.
+    smemeFontPath: undefined,
 };
 
 // .env and real env vars override defaults

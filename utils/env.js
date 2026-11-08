@@ -196,5 +196,6 @@ module.exports = {
   writeEnvValue,
   applyEnvOverrides,
   coerceValue,
+  quoteEnvValue,
   ENV_PATH,
 };

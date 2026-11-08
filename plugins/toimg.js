@@ -4,16 +4,13 @@
  *
  * Usage:
  *   - Reply to a sticker with: !toimg
+ *
+ * Media details (sharp, FFmpeg, temp files) live in utils/media.
  */
 
-const { MessageMedia } = require('whatsapp-web.js');
 const config = require('../config');
-const sharp = require('sharp');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
-const { exec } = require('child_process');
+const logger = require('../utils/logger');
+const mediaToolkit = require('../utils/media');
 
 /**
  * Puppeteer sometimes throws a minified in-page object (e.g. "r: r") instead
@@ -67,8 +64,6 @@ module.exports = {
             return;
         }
 
-        const logger = require('../utils/logger');
-
         let quoted;
         try {
             quoted = await getQuotedMessageWithRetry(message);
@@ -88,91 +83,62 @@ module.exports = {
             return;
         }
 
-        let media;
+        let stickerMedia;
         try {
-            media = await quoted.downloadMedia();
+            stickerMedia = await quoted.downloadMedia();
         } catch (err) {
             logger.error(`[toimg] Error downloading sticker media: ${describeError(err)}`);
             await message.reply('Failed to download sticker media.');
             return;
         }
-        if (!media) {
+
+        if (!stickerMedia) {
             await message.reply('Failed to download sticker media.');
             return;
         }
 
-        const webpBuffer = Buffer.from(media.data, 'base64');
-        const isAnimated = webpBuffer.indexOf(Buffer.from('ANIM')) !== -1;
-
-        if (!isAnimated) {
-            // Static sticker: WebP -> PNG via sharp.
-            //
-            // WA stickers are always stored on a 512x512 canvas, padded with
-            // transparent pixels around the actual content (e.g. a 16:9 video
-            // sticker sits in the middle of a square frame). Converting the
-            // raw webp straight to PNG preserves that full square + padding,
-            // which is correct resolution-wise but looks "squashed into 1:1"
-            // with a visible background once something flattens the alpha.
-            // .trim() crops that transparent border back down to the real
-            // content bounding box before we ever flatten/send anything.
-            const pngBuffer = await sharp(webpBuffer).trim().png().toBuffer();
-            const pngMedia = new MessageMedia('image/png', pngBuffer.toString('base64'), 'sticker.png');
-
-            // WhatsApp re-encodes ordinary "photo" sends to JPEG on its own
-            // media pipeline (not just a client-side thing — it happens even
-            // if we send a perfectly good PNG), which flattens any remaining
-            // transparency onto a white background. Sending as a document
-            // skips that re-encode entirely, so the PNG (and its alpha
-            // channel) arrives byte-for-byte untouched. Request it with:
-            //   .toimg doc
-            const asDocument = args[0] && ['doc', 'document', 'png'].includes(args[0].toLowerCase());
-            await client.sendMessage(message.from, pngMedia, asDocument ? { sendMediaAsDocument: true } : {});
-            return;
-        }
-
-        // Animated sticker: WebP -> GIF (sharp) -> MP4 (FFmpeg) -> send as video GIF
-        const tempId = crypto.randomBytes(6).toString('hex');
-        const tempGif = path.join(os.tmpdir(), `sticker_${tempId}.gif`);
-        const tempMp4 = path.join(os.tmpdir(), `sticker_${tempId}.mp4`);
-
         try {
-            // Step 1: Convert animated WebP to GIF using sharp
-            const gifBuffer = await sharp(webpBuffer, { animated: true })
-                .gif()
-                .toBuffer();
-            fs.writeFileSync(tempGif, gifBuffer);
+            const result = await mediaToolkit.stickerToVisual(stickerMedia);
 
-            // Step 2: Convert GIF to MP4 using FFmpeg
-            const ffmpegBin = config.ffmpegPath || 'ffmpeg';
-            const command = `"${ffmpegBin}" -i "${tempGif}" -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${tempMp4}" -y`;
+            if (result.kind === 'image') {
+                // WhatsApp re-encodes ordinary "photo" sends to JPEG on its own
+                // media pipeline, which flattens transparency onto white.
+                // Sending as a document skips that re-encode entirely, so the
+                // PNG (and its alpha channel) arrives byte-for-byte untouched.
+                const asDocument =
+                    args[0] && ['doc', 'document', 'png'].includes(args[0].toLowerCase());
 
-            logger.debug(`[toimg] Executing FFmpeg: ${command}`);
+                await client.sendMessage(
+                    message.from,
+                    result.media,
+                    asDocument ? { sendMediaAsDocument: true } : {},
+                );
+                return;
+            }
 
-            await new Promise((resolve, reject) => {
-                exec(command, (error, stdout, stderr) => {
-                    if (error) {
-                        logger.debug(`[toimg] FFmpeg stdout: ${stdout}`);
-                        logger.debug(`[toimg] FFmpeg stderr: ${stderr}`);
-                        reject(error);
-                    } else {
-                        resolve();
-                    }
-                });
-            });
-
-            // Step 3: Send MP4 as looping GIF
-            const mp4Data = fs.readFileSync(tempMp4).toString('base64');
-            const videoMedia = new MessageMedia('video/mp4', mp4Data, 'sticker.mp4');
-            await client.sendMessage(message.from, videoMedia, {
+            await client.sendMessage(message.from, result.media, {
                 sendVideoAsGif: true,
             });
-
         } catch (err) {
-            console.error('[toimg] Conversion failed:', err.message);
-            await message.reply('Failed to process animated sticker.');
-        } finally {
-            if (fs.existsSync(tempGif)) fs.unlinkSync(tempGif);
-            if (fs.existsSync(tempMp4)) fs.unlinkSync(tempMp4);
+            if (err.code === mediaToolkit.CODES.BUSY) {
+                await message.reply('Media queue is busy right now. Please try again in a moment.');
+                return;
+            }
+
+            if (err.code === mediaToolkit.CODES.FFMPEG_MISSING) {
+                await message.reply(
+                    'FFmpeg is not installed, so animated stickers cannot be converted.',
+                );
+                return;
+            }
+
+            if (err.code === mediaToolkit.CODES.UNSUPPORTED) {
+                await message.reply('That sticker could not be read.');
+                return;
+            }
+
+            logger.error('[toimg] Conversion failed:', describeError(err));
+            await message.reply('Failed to process sticker.');
         }
     },
 };

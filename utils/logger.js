@@ -3,7 +3,7 @@
  * Color-coded output with timestamps and spinner support.
  */
 
-const colors = {
+const rawColors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
   dim: '\x1b[2m',
@@ -15,6 +15,17 @@ const colors = {
   white: '\x1b[37m',
   gray: '\x1b[90m',
 };
+
+// Colours and the spinner only make sense on a real terminal. This keeps
+// redirected output (files, PM2, systemd, CI) free of escape sequences.
+const isTTY = process.stdout.isTTY === true;
+const forceColor =
+  process.env.FORCE_COLOR === '1' || process.env.FORCE_COLOR === 'true';
+const useColor = !('NO_COLOR' in process.env) && (isTTY || forceColor);
+
+const colors = useColor
+  ? rawColors
+  : Object.fromEntries(Object.keys(rawColors).map((key) => [key, '']));
 
 function timestamp() {
   return new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -31,11 +42,11 @@ const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 let _spinnerIdx = 0;
 
 function clearLine() {
-  process.stdout.write('\r\x1b[K');
+  if (isTTY) process.stdout.write('\r\x1b[K');
 }
 
 function drawSpinner() {
-  if (!_spinnerText) return;
+  if (!_spinnerText || !isTTY) return;
   process.stdout.write(`\r  ${_spinnerFrames[_spinnerIdx++ % _spinnerFrames.length]} ${_spinnerText}`);
 }
 
@@ -115,12 +126,20 @@ const logger = {
   startSpinner(text) {
     _spinnerText = text;
     _spinnerIdx = 0;
+
+    // Non-TTY output: print once instead of animating.
+    if (!isTTY) {
+      console.log(`  ${text}`);
+      _spinnerText = null;
+      return;
+    }
+
     _spinnerInterval = setInterval(() => drawSpinner(), 100);
     drawSpinner();
   },
 
   stopSpinner() {
-    clearInterval(_spinnerInterval);
+    if (_spinnerInterval) clearInterval(_spinnerInterval);
     _spinnerInterval = null;
     _spinnerText = null;
     clearLine();

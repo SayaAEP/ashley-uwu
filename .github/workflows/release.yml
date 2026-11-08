@@ -87,10 +87,6 @@ jobs:
         run: |
           npm version ${{ steps.bump.outputs.version }} --no-git-tag-version
 
-      - name: Update version in config.js
-        run: |
-          sed -i "s/botVersion: \".*\"/botVersion: \"${{ steps.bump.outputs.version }}\"/" config.js
-
       - name: Generate changelog
         id: changelog
         run: |
@@ -160,7 +156,7 @@ jobs:
 
       - name: Commit version bump
         run: |
-          git add package.json config.js
+          git add package.json
           git commit -m "chore: bump version to v${{ steps.bump.outputs.version }}"
           git push
 

@@ -14,6 +14,21 @@ const pluginHandler = require('../handlers/plugin');
 let headerTitle = config.botName || 'Ashley UwU';
 // ═══════════════════════════════════════════════════════
 
+/**
+ * Strip any configured prefix from a user-supplied command name.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripConfiguredPrefix(text) {
+  const prefixes = [config.prefix, config.second_prefix]
+    .filter((prefix) => typeof prefix === 'string' && prefix.length > 0)
+    .sort((a, b) => b.length - a.length);
+
+  const used = prefixes.find((prefix) => text.startsWith(prefix));
+  return used ? text.slice(used.length) : text;
+}
+
 module.exports = {
   name: 'menu',
   aliases: ['help', 'm', 'h', 'plugins'],
@@ -35,7 +50,7 @@ module.exports = {
 
     // ── Single Command Help Request ───────────────────────
     if (args.length > 0) {
-      const targetQuery = args[0].toLowerCase().replace(/^[.!]/, '');
+      const targetQuery = stripConfiguredPrefix(args[0]).toLowerCase();
       const plugin = pluginHandler.findPlugin(targetQuery);
 
       if (!plugin) {
@@ -58,7 +73,7 @@ module.exports = {
         `│ *Group Only:* ${plugin.groupOnly ? 'Yes' : 'No'}`,
         `╰─────────────────────`,
         ``,
-        `Hello *@${requesterName}*, hope this helps! ✨`
+        `Hello *${requesterName}*, hope this helps! ✨`
       ].join('\n');
 
       await message.reply(detailText);
@@ -91,6 +106,7 @@ module.exports = {
       ``,
       `╭──「 *${headerTitle}* 」`,
       `│ *Bot Name:* ${config.botName}`,
+      `│ *Version:* v${config.botVersion}`,
       `│ *Prefix:* ${config.prefix} / ${config.second_prefix}`,
       `│ *Total Plugins:* ${uniquePlugins.length}`,
       `╰─────────────────────`,

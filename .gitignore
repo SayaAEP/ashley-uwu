@@ -6,6 +6,7 @@ RemoteAuth*/
 RemoteAuth*.zip
 wwebjs_temp_session*/
 wwebjs_temp_session_undefined*/
+instance.lock
 package-lock.json
 
 # Local environment overrides (machine-specific paths stay private)
