@@ -1,6 +1,6 @@
 {
     "name": "ashley-uwu",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "description": "Ashley UwU is simple basic bot to create sticker other using customizeable api",
     "main": "index.js",
     "scripts": {
