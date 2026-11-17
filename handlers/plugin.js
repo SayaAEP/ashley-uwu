@@ -11,7 +11,7 @@ const config = require("../config");
 const PLUGINS_DIR = path.join(__dirname, "..", "plugins");
 const COOLDOWN_SWEEP_MS = 60_000;
 
-// ─── Pure helpers (unit tested) ─────────────────────────
+// ─── Pure helpers ───────────────────────────────────────
 
 /**
  * Parse a command body into its prefix, command name, and arguments.
@@ -195,6 +195,9 @@ class PluginHandler {
 
     /** @type {Map<string, number>} `userId:commandName` → last used timestamp */
     this.cooldowns = new Map();
+
+    /** @type {Set<string>} `userId:commandName` keys currently executing */
+    this.inFlight = new Set();
 
     /** @type {Map<string, NodeJS.Timeout>} filename → debounce timer */
     this._debounceTimers = new Map();
@@ -654,9 +657,19 @@ class PluginHandler {
       return;
     }
 
-    // Reserve the slot *before* running so simultaneous messages cannot both
-    // pass the cooldown check.
-    this.setCooldown(senderId, plugin.name);
+    // Guard concurrent runs: two simultaneous messages must not both pass the
+    // cooldown check before either has finished. The cooldown itself starts
+    // only after a successful run (see below), so a throwing handler does not
+    // charge the user.
+    const runKey = `${senderId}:${plugin.name}`;
+    if (this.inFlight.has(runKey)) {
+      await this.safeReply(
+        message,
+        "That command is already running — please wait.",
+      );
+      return;
+    }
+    this.inFlight.add(runKey);
 
     try {
       let displayId = senderId;
@@ -683,6 +696,9 @@ class PluginHandler {
       );
 
       await plugin.handler(client, message, command.args);
+
+      // Start the cooldown only after a successful run.
+      this.setCooldown(senderId, plugin.name);
     } catch (err) {
       if (config.debug) {
         logger.error(`Plugin "${plugin.name}" error:`, err);
@@ -694,6 +710,8 @@ class PluginHandler {
         message,
         "An error occurred while executing that command.",
       );
+    } finally {
+      this.inFlight.delete(runKey);
     }
   }
 }

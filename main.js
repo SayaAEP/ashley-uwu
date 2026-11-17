@@ -14,6 +14,9 @@
 const fs = require("fs");
 const path = require("path");
 const { Client, LocalAuth, NoAuth } = require("whatsapp-web.js");
+// Must load before any client is created: makes media sends work on Firefox
+// (Puppeteer BiDi refuses class instances).
+require("./utils/bidiCompat");
 const qrcode = require("qrcode-terminal");
 const { loadEnv } = require("./utils/env");
 
@@ -23,7 +26,10 @@ loadEnv();
 const config = require("./config");
 const logger = require("./utils/logger");
 const pluginHandler = require("./handlers/plugin");
-const { resolveChromiumPath, cleanSingletonLock } = require("./utils/chromium");
+const {
+  resolveBrowser,
+  cleanProfileLocks,
+} = require("./utils/browser");
 const { resolveFFmpegPath } = require("./utils/ffmpeg");
 const { PROJECT_ROOT, resolveProjectPath } = require("./utils/paths");
 const sessionLock = require("./utils/sessionLock");
@@ -40,6 +46,9 @@ let client = null;
 let authStrategy = null;
 let instanceLock = null;
 let mongoose = null;
+
+/** Browser that was actually started: { engine, executablePath }. */
+let activeBrowser = null;
 
 let shuttingDown = false;
 let reconnectAttempt = 0;
@@ -160,31 +169,41 @@ async function createAuthStrategy() {
 /**
  * Build a fresh client + auth strategy. Used at boot and on every reconnect.
  *
+ * @param {{ engine: "chromium"|"firefox", executablePath?: string }} browser
  * @returns {Promise<Client>}
  */
-async function createClient() {
+async function createClient(browser) {
+  const engine = browser.engine;
+
+  // The profile directory is shared. Chromium keeps its login under
+  // `Default/`; Firefox writes its own profile files alongside it and they do
+  // not interfere. Each engine still needs its own one-time QR login, because
+  // session formats are not interchangeable.
   const strategy = await createAuthStrategy();
   authStrategy = strategy;
 
-  let chromiumPath;
-  try {
-    chromiumPath = resolveChromiumPath(config);
-  } catch (err) {
-    err.fatal = true;
-    throw err;
-  }
-
   const puppeteerOpts = {
     headless: true,
+    // Applies to both engines (Puppeteer-level option, not CDP-only).
     protocolTimeout:
-      config.puppeteerProtocolTimeout !== undefined
-        ? config.puppeteerProtocolTimeout
+      config.browserProtocolTimeout !== undefined
+        ? config.browserProtocolTimeout
         : 300000,
-    args: config.puppeteerArgs || [],
   };
 
-  if (chromiumPath) {
-    puppeteerOpts.executablePath = chromiumPath;
+  if (engine === "firefox") {
+    // Puppeteer selects FirefoxLauncher (WebDriver BiDi) with this option.
+    // (puppeteer-core 24 uses `browser`, not the older `product`.)
+    puppeteerOpts.browser = "firefox";
+    puppeteerOpts.executablePath = browser.executablePath;
+    // Chromium flags (--no-sandbox, --disable-gpu, …) mean nothing to Firefox.
+    puppeteerOpts.args = config.browserFirefoxArgs || [];
+  } else {
+    puppeteerOpts.args = config.browserChromiumArgs || [];
+
+    if (browser.executablePath) {
+      puppeteerOpts.executablePath = browser.executablePath;
+    }
   }
 
   const clientOpts = {
@@ -194,6 +213,12 @@ async function createClient() {
       config.authTimeoutMs !== undefined ? config.authTimeoutMs : 300000,
   };
 
+  // whatsapp-web.js defaults to a Chrome user agent and calls
+  // page.setUserAgent(). Firefox should present itself natively.
+  if (engine === "firefox") {
+    clientOpts.userAgent = false;
+  }
+
   if (config.useWebVersionCache) {
     clientOpts.webVersionCache = {
       type: "local",
@@ -202,10 +227,83 @@ async function createClient() {
     };
   }
 
+  const target = browser.executablePath
+    ? `${engine} → ${browser.executablePath}`
+    : engine;
+  logger.info(`Browser: ${target}`);
+
   const nextClient = new Client(clientOpts);
   selfMessageGuard.install(nextClient);
   attachEvents(nextClient);
   return nextClient;
+}
+
+/**
+ * Start the WhatsApp client, falling back from Firefox to Chromium once.
+ *
+ * Once an engine has succeeded, later reconnects reuse it (no flapping).
+ * Throws a fatal error when no engine can start.
+ *
+ * @returns {Promise<{ engine: "chromium"|"firefox", executablePath?: string }>}
+ */
+async function startClient() {
+  let browser;
+
+  try {
+    browser = activeBrowser || resolveBrowser(config);
+  } catch (err) {
+    if (err.engine === "firefox") {
+      logger.warn(`Firefox unavailable: ${err.message.split("\n")[0]}`);
+      browser = resolveBrowser({ ...config, browserEngine: "chromium" });
+    } else {
+      throw err;
+    }
+  }
+
+  // Falling back is only for the initial start. Once an engine is running,
+  // reconnects retry that same engine (no flapping between profiles).
+  let fallbackAllowed = !activeBrowser;
+  let lastErr;
+
+  for (;;) {
+    try {
+      cleanProfileLocks(config, browser.engine);
+
+      const nextClient = await createClient(browser);
+      client = nextClient;
+      await nextClient.initialize();
+
+      activeBrowser = browser;
+      return browser;
+    } catch (err) {
+      lastErr = err;
+      logger.error(
+        `Browser engine "${browser.engine}" failed: ${err.message}`,
+      );
+      await destroyCurrentClient();
+      cleanProfileLocks(config, browser.engine);
+    }
+
+    // The Chromium fallback is resolved lazily, only after Firefox failed.
+    if (fallbackAllowed && browser.engine === "firefox") {
+      fallbackAllowed = false;
+
+      try {
+        browser = resolveBrowser({ ...config, browserEngine: "chromium" });
+        logger.warn("Falling back to Chromium.");
+        continue;
+      } catch (fallbackErr) {
+        logger.warn(
+          `Chromium fallback unavailable: ${fallbackErr.message.split("\n")[0]}`,
+        );
+      }
+    }
+
+    break;
+  }
+
+  if (lastErr) lastErr.fatal = true;
+  throw lastErr || new Error("No browser engine could be started.");
 }
 
 // ─── Events ──────────────────────────────────────────────
@@ -309,12 +407,7 @@ async function runReconnect(reason) {
   try {
     await destroyCurrentClient();
 
-    // A crashed Chromium may leave a SingletonLock behind.
-    cleanSingletonLock(config);
-
-    const nextClient = await createClient();
-    client = nextClient;
-    await nextClient.initialize();
+    await startClient();
 
     logger.info("Reconnect: client initialized, waiting for ready...");
     result = { ok: true };
@@ -517,6 +610,13 @@ function registerProcessHandlers() {
 
   process.on("unhandledRejection", (err) => {
     logger.error("Unhandled rejection:", err?.stack || err);
+
+    // A rejected promise inside the client's internals can leave a living but
+    // unusable browser behind. Rebuild the client; backoff and maxAttempts
+    // keep this from turning into a tight restart loop.
+    if (client && !shuttingDown) {
+      scheduleReconnect("unhandledRejection");
+    }
   });
 
   // Interactive terminal commands only make sense with a real TTY.
@@ -612,8 +712,7 @@ async function boot() {
   resolveFFmpegPath(config);
 
   try {
-    client = await createClient();
-    await client.initialize();
+    await startClient();
   } catch (err) {
     if (err.fatal) {
       logger.error(`Failed to start bot: ${err.message}`);

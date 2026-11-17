@@ -38,9 +38,18 @@ module.exports = {
     // Reply before plugins/client are replaced.
     await message.reply('Restarting (reload plugins + reconnect)...');
 
-    const result = await botControl.restart('command: restart');
-    if (!result.ok) {
-      logger.warn(`Restart command failed: ${result.error}`);
-    }
+    // Defer teardown: this handler runs inside the client's own
+    // `message_create` event, so destroying the client here would pull the
+    // Puppeteer context out from under the in-flight dispatch.
+    setImmediate(() => {
+      botControl
+        .restart('command: restart')
+        .then((result) => {
+          if (!result.ok) {
+            logger.warn(`Restart command failed: ${result.error}`);
+          }
+        })
+        .catch((err) => logger.error(`Restart command error: ${err.message}`));
+    });
   },
 };

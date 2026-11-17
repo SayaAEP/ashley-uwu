@@ -38,9 +38,18 @@ module.exports = {
     // Reply before the current client is destroyed.
     await message.reply('Reconnecting to WhatsApp...');
 
-    const result = await botControl.reconnect('command: reconnect');
-    if (!result.ok) {
-      logger.warn(`Reconnect command failed: ${result.error}`);
-    }
+    // Defer teardown: this handler runs inside the client's own
+    // `message_create` event, so destroying the client here would pull the
+    // Puppeteer context out from under the in-flight dispatch.
+    setImmediate(() => {
+      botControl
+        .reconnect('command: reconnect')
+        .then((result) => {
+          if (!result.ok) {
+            logger.warn(`Reconnect command failed: ${result.error}`);
+          }
+        })
+        .catch((err) => logger.error(`Reconnect command error: ${err.message}`));
+    });
   },
 };

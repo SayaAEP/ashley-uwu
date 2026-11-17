@@ -123,7 +123,7 @@ function shouldIgnore(message) {
   return false;
 }
 
-/** Test helper — clears all tracked state. */
+/** State reset helper — clears all tracked state (debugging/future tests). */
 function reset() {
   sentIds.clear();
   sentTexts.clear();

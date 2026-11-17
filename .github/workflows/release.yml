@@ -6,12 +6,18 @@
 #   2. Choose version bump type (patch / minor / major)
 #   3. Workflow bumps version, generates changelog, creates GitHub Release
 #
-# Commit format (Conventional Commits):
-#   feat: add echo plugin          → appears under "Features"
-#   fix: resolve MongoDB timeout   → appears under "Bug Fixes"
-#   docs: update plugin guide      → appears under "Documentation"
-#   refactor: clean up logger      → appears under "Refactors"
-#   chore: update dependencies     → appears under "Chores"
+# Commit format (Conventional Commits 1.0.0):
+#   feat: add echo plugin             → Features
+#   feat(preset): add preset manager  → Features (scope shown)
+#   fix: resolve MongoDB timeout      → Bug Fixes
+#   docs: update plugin guide         → Documentation
+#   refactor: clean up logger         → Refactors
+#   chore: update dependencies        → Chores
+#   feat!: drop legacy auth           → Features + Breaking Changes
+#   any commit with a "BREAKING CHANGE:" footer → Breaking Changes
+#
+# Bump type "auto" derives the semver bump from the commits:
+#   breaking change → major, feat: → minor, otherwise → patch
 
 name: Release
 
@@ -21,9 +27,10 @@ on:
       bump:
         description: 'Version bump type'
         required: true
-        default: 'patch'
+        default: 'auto'
         type: choice
         options:
+          - auto
           - patch
           - minor
           - major
@@ -62,9 +69,31 @@ jobs:
         id: bump
         run: |
           CURRENT="${{ steps.current.outputs.version }}"
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREVIOUS_TAG}..HEAD"
+          fi
+
+          BUMP="${{ inputs.bump }}"
+
+          if [ "$BUMP" = "auto" ]; then
+            if git log $RANGE --pretty=format:"%s" | grep -Eq '^[A-Za-z]+(\([^)]*\))?!:' \
+              || git log $RANGE --pretty=format:"%b" | grep -q 'BREAKING CHANGE:'; then
+              BUMP="major"
+            elif git log $RANGE --pretty=format:"%s" | grep -Eq '^feat(\([^)]*\))?:'; then
+              BUMP="minor"
+            else
+              BUMP="patch"
+            fi
+            echo "Auto bump type: $BUMP"
+          fi
+
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
-          case "${{ inputs.bump }}" in
+          case "$BUMP" in
             major)
               MAJOR=$((MAJOR + 1))
               MINOR=0
@@ -103,53 +132,83 @@ jobs:
           {
             echo "changelog<<CHANGELOG_EOF"
 
-            # Features
-            FEATS=$(git log $RANGE --pretty=format:"%s" --grep="^feat" 2>/dev/null | sed 's/^feat[:(]//' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
-            if [ -n "$FEATS" ]; then
-              echo "### Features"
-              echo "$FEATS"
-              echo ""
-            fi
+            node - "$RANGE" <<'NODE'
+          const { execFileSync } = require('node:child_process');
 
-            # Bug Fixes
-            FIXES=$(git log $RANGE --pretty=format:"%s" --grep="^fix" 2>/dev/null | sed 's/^fix[:(]//' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
-            if [ -n "$FIXES" ]; then
-              echo "### Bug Fixes"
-              echo "$FIXES"
-              echo ""
-            fi
+          const range = process.argv[2];
+          const raw = execFileSync(
+            'git',
+            ['log', range, '--pretty=format:%s%x1f%b%x1e'],
+            { encoding: 'utf8' },
+          );
 
-            # Documentation
-            DOCS=$(git log $RANGE --pretty=format:"%s" --grep="^docs" 2>/dev/null | sed 's/^docs[:(]//' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
-            if [ -n "$DOCS" ]; then
-              echo "### Documentation"
-              echo "$DOCS"
-              echo ""
-            fi
+          const commits = raw
+            .split('\x1e')
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .map((entry) => {
+              const [subject, ...body] = entry.split('\x1f');
+              return {
+                subject: (subject || '').trim(),
+                body: body.join('\x1f').trim(),
+              };
+            });
 
-            # Refactors
-            REFACTORS=$(git log $RANGE --pretty=format:"%s" --grep="^refactor" 2>/dev/null | sed 's/^refactor[:(]//' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
-            if [ -n "$REFACTORS" ]; then
-              echo "### Refactors"
-              echo "$REFACTORS"
-              echo ""
-            fi
+          const HEADER = /^([A-Za-z]+)(?:\(([^)]*)\))?(!)?:\s*(.*)$/;
+          const SECTIONS = [
+            ['feat', 'Features'],
+            ['fix', 'Bug Fixes'],
+            ['perf', 'Performance'],
+            ['docs', 'Documentation'],
+            ['refactor', 'Refactors'],
+            ['chore', 'Chores'],
+            ['test', 'Tests'],
+            ['build', 'Build System'],
+            ['ci', 'CI'],
+            ['style', 'Styles'],
+          ];
 
-            # Chores
-            CHORES=$(git log $RANGE --pretty=format:"%s" --grep="^chore" 2>/dev/null | sed 's/^chore[:(]//' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
-            if [ -n "$CHORES" ]; then
-              echo "### Chores"
-              echo "$CHORES"
-              echo ""
-            fi
+          const groups = new Map(SECTIONS.map(([type]) => [type, []]));
+          const other = [];
+          const breaking = [];
 
-            # Other (commits that don't match any prefix)
-            OTHERS=$(git log $RANGE --pretty=format:"%s" --invert-grep --grep="^feat" --grep="^fix" --grep="^docs" --grep="^refactor" --grep="^chore" 2>/dev/null | sed 's/^/- /')
-            if [ -n "$OTHERS" ]; then
-              echo "### Other Changes"
-              echo "$OTHERS"
-              echo ""
-            fi
+          for (const commit of commits) {
+            const match = HEADER.exec(commit.subject);
+
+            if (!match) {
+              other.push('- ' + commit.subject);
+              continue;
+            }
+
+            const isBreaking =
+              Boolean(match[3]) ||
+              /(^|\n)BREAKING CHANGE:/.test(commit.body);
+
+            const scope = match[2] ? '**' + match[2] + ':** ' : '';
+            const line = '- ' + scope + match[4];
+
+            if (isBreaking) breaking.push(line);
+            if (groups.has(match[1])) groups.get(match[1]).push(line);
+            else other.push(line);
+          }
+
+          const parts = [];
+
+          if (breaking.length > 0) {
+            parts.push('### ⚠ BREAKING CHANGES', ...breaking, '');
+          }
+
+          for (const [type, title] of SECTIONS) {
+            const items = groups.get(type);
+            if (items.length > 0) parts.push('### ' + title, ...items, '');
+          }
+
+          if (other.length > 0) {
+            parts.push('### Other Changes', ...other, '');
+          }
+
+          console.log(parts.join('\n'));
+          NODE
 
             echo "CHANGELOG_EOF"
           } >> $GITHUB_OUTPUT

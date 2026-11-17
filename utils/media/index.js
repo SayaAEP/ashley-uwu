@@ -14,7 +14,7 @@
  * Adding a new operation later:
  *   1. Put the transformation in `convert.js`.
  *   2. Add a wrapper here that calls `enqueue("<label>", () => ...)`.
- *   3. Document it in `docs/MEDIA.md` and add a test.
+ *   3. Document it in `docs/MEDIA.md`.
  */
 
 const config = require("../../config");
@@ -135,10 +135,16 @@ async function toSticker(input, options = {}) {
 /**
  * Turn a sticker into something viewable.
  *
+ * Static stickers become PNGs. Animated stickers become:
+ *   - "gif"  → a real GIF file (1-bit alpha; send as a document),
+ *   - "webm" → WebM/VP9 (full alpha; send as a document),
+ *   - "mp4"  → H.264 MP4 (no alpha; plays inline in WhatsApp).
+ *
  * @param {object} sticker MessageMedia of a WebP sticker
- * @returns {Promise<{ kind: "image"|"animation", media: object }>}
+ * @param {{ animation?: "gif"|"mp4"|"webm" }} [options]
+ * @returns {Promise<{ kind: "image"|"animation", format?: "gif"|"mp4"|"webm", media: object }>}
  */
-async function stickerToVisual(sticker) {
+async function stickerToVisual(sticker, options = {}) {
   assertMedia(sticker);
 
   if (!sticker.mimetype.includes("webp")) {
@@ -162,9 +168,20 @@ async function stickerToVisual(sticker) {
     };
   }
 
+  const format = ["gif", "webm"].includes(options.animation)
+    ? options.animation
+    : "mp4";
+
+  const convertAnimation = {
+    gif: () => convert.webpToGif(buffer),
+    webm: () => convert.webpToWebm(buffer),
+    mp4: () => convert.webpToMp4(buffer),
+  }[format];
+
   return {
     kind: "animation",
-    media: await enqueue("sticker-animation", () => convert.webpToMp4(buffer)),
+    format,
+    media: await enqueue(`sticker-animation-${format}`, convertAnimation),
   };
 }
 

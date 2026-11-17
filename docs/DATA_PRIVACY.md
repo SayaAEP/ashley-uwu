@@ -84,6 +84,27 @@ rmdir /s /q .wwebjs_auth
 
 You can also unlink from WhatsApp: Settings > Linked Devices > remove "Chrome".
 
+### 6. Browser sandbox (`--no-sandbox`)
+
+The default Puppeteer arguments in `config.js` include `--no-sandbox` and
+`--disable-setuid-sandbox`. These are usually required when the bot runs as
+root, inside Docker/containers, or on systems where Chromium's OS-level
+sandbox cannot start.
+
+**Tradeoff:** `--no-sandbox` disables Chromium's process sandbox. If a
+malicious page or a WhatsApp Web bug achieved code execution inside the
+browser, the OS sandbox would normally contain it — without it, that code runs
+with the bot process's privileges.
+
+**Mitigations (in increasing order of strength):**
+
+1. Run the bot as a **dedicated, unprivileged user** with access only to the
+   project folder.
+2. Run it inside a **container or VM** so a browser compromise is contained.
+3. If your environment supports the sandbox (some non-root Linux setups), remove
+   `--no-sandbox` / `--disable-setuid-sandbox` and, if needed, set
+   `BROWSER_CHROMIUM_ARGS` in `.env` to your own flag list.
+
 ---
 
 ## Auth Strategies

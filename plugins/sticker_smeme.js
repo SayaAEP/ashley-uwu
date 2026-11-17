@@ -22,49 +22,14 @@ const config = require("../config");
 const logger = require("../utils/logger");
 const media = require("../utils/media");
 const { resolveProjectPath } = require("../utils/paths");
+const { describeError, getQuotedMessageWithRetry } = require("../utils/whatsapp");
 
 const MAX_DIMENSION = 4096;
+const MAX_TEXT_LENGTH = 200;
 const JPEG_QUALITY = 90;
 const MIN_FONT_SIZE = 14;
 const DEFAULT_FONT_FILE = "assets/ttf/impact.ttf";
 const FALLBACK_FONT = 'Impact, "Arial Black", sans-serif';
-
-// ─── WhatsApp helpers (kept local to this plugin) ───────
-
-/**
- * Puppeteer sometimes throws a minified in-page object instead of a real
- * Error. Pull whatever is informative off the object so logs are debuggable.
- */
-function describeError(err) {
-  if (!err) return "unknown error";
-  if (err.message && err.message !== err.name) return err.message;
-  try {
-    return JSON.stringify(err, Object.getOwnPropertyNames(err));
-  } catch {
-    return String(err);
-  }
-}
-
-/**
- * getQuotedMessage() occasionally fails on the first attempt because WhatsApp
- * Web's message store has not indexed the quoted message yet. Retry once.
- */
-async function getQuotedMessageWithRetry(message, attempts = 2, delayMs = 400) {
-  let lastErr;
-
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await message.getQuotedMessage();
-    } catch (err) {
-      lastErr = err;
-      if (i < attempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-
-  throw lastErr;
-}
 
 // ─── Renderer dependencies (lazy) ───────────────────────
 
@@ -461,6 +426,13 @@ module.exports = {
       return;
     }
 
+    if (text.length > MAX_TEXT_LENGTH) {
+      await message.reply(
+        `Text is too long — maximum ${MAX_TEXT_LENGTH} characters.`,
+      );
+      return;
+    }
+
     let input;
     try {
       input = await getImageFromMessage(message);
@@ -518,7 +490,4 @@ module.exports = {
       await message.reply("Failed to create meme.");
     }
   },
-
-  // Internal helpers exposed for unit tests only; not part of the plugin API.
-  _test: { splitMemeText, wrapLines, fitBlock },
 };

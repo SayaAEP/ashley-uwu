@@ -33,10 +33,16 @@ const CONFIG_SCHEMA = {
   ownerNumber: { env: "OWNER_NUMBER", type: "string" },
   authStrategy: { env: "AUTH_STRATEGY", type: "string" },
   authDataPath: { env: "AUTH_DATA_PATH", type: "string" },
-  puppeteerExecutablePath: { env: "PUPPETEER_EXECUTABLE_PATH", type: "string" },
+  browserEngine: { env: "BROWSER_ENGINE", type: "string" },
+  browserExecutablePath: { env: "BROWSER_EXECUTABLE_PATH", type: "string" },
+  browserFallbackExecutablePath: {
+    env: "BROWSER_FALLBACK_EXECUTABLE_PATH",
+    type: "string",
+  },
   useWebVersionCache: { env: "USE_WEB_VERSION_CACHE", type: "boolean" },
-  puppeteerArgs: { env: "PUPPETEER_ARGS", type: "array" },
-  puppeteerProtocolTimeout: { env: "PUPPETEER_PROTOCOL_TIMEOUT", type: "number" },
+  browserChromiumArgs: { env: "BROWSER_CHROMIUM_ARGS", type: "array" },
+  browserFirefoxArgs: { env: "BROWSER_FIREFOX_ARGS", type: "array" },
+  browserProtocolTimeout: { env: "BROWSER_PROTOCOL_TIMEOUT", type: "number" },
   authTimeoutMs: { env: "AUTH_TIMEOUT_MS", type: "number" },
   ffmpegPath: { env: "FFMPEG_PATH", type: "string" },
   mongoUri: { env: "MONGO_URI", type: "string" },
@@ -81,16 +87,29 @@ const DEFAULTS = {
     // authDataPath: '.wwebjs_auth',
     authDataPath: ".wwebjs_auth",
 
-    // ─── Chromium / Chrome ──────────────────────────────
-    // Path to a Chromium/Chrome executable.
+    // ─── Browser ────────────────────────────────────────
+    // Engine: auto | chromium | firefox
     //
-    // This bot uses puppeteer-core (no bundled browser) — a path is required.
+    //   auto     → detect from the resolved path. Anything not recognized as
+    //              Firefox-family is treated as Chromium, so forks such as
+    //              Thorium / Natrium / Brave / Vivaldi work automatically.
+    //   chromium → force Chromium launch options.
+    //   firefox  → force Firefox launch options (experimental).
     //
-    // Priority:
-    //   1. .env                    → PUPPETEER_EXECUTABLE_PATH
-    //   2. this value              → puppeteerExecutablePath
-    //   3. browser-bin/<name>/     → binary in project folder
-    //   4. system install          → auto-detected
+    // Firefox is NOT officially supported by whatsapp-web.js. On startup
+    // failure the bot falls back to Chromium once; if neither works it exits.
+    browserEngine: "auto",
+
+    // Primary browser executable (either engine).
+    //
+    // This bot uses puppeteer-core (no bundled browser) — a path is required
+    // unless a browser is auto-detected.
+    //
+    // Resolution order:
+    //   1. BROWSER_EXECUTABLE_PATH        (primary)
+    //   2. BROWSER_FALLBACK_EXECUTABLE_PATH (secondary, e.g. Chromium fallback)
+    //   3. browser-bin/<name>/            → binary in project folder
+    //   4. system install                 → auto-detected
     //
     // Auto-discovered paths are saved to .env (never here, so merges stay clean).
     //
@@ -100,20 +119,23 @@ const DEFAULTS = {
     // Examples:
     //   '/usr/bin/chromium'
     //   '/usr/bin/google-chrome-stable'
-    //   '/usr/bin/ungoogled-chromium'
-    //   'E:/ungoogled-chromium-portable-win64-140.0.7339.137-21/app/chrome.exe'
+    //   'C:/Program Files/Mozilla Firefox/firefox.exe'
     //
     // Machine-specific paths belong in .env, not here.
-    puppeteerExecutablePath: undefined,
+    browserExecutablePath: undefined,
+
+    // Second path tried when the primary is missing or fails to start.
+    // Typical setup: Firefox primary + Chromium fallback.
+    browserFallbackExecutablePath: undefined,
 
     // Cache WhatsApp Web version files locally — saves bandwidth and startup CPU.
     useWebVersionCache: true,
 
-    // Custom Chromium flags. Defaults tuned for low-RAM ARM64 SBCs.
+    // Chromium command line flags. Defaults tuned for low-RAM ARM64 SBCs.
     // If GPU accel works (Mesa Turnip on Linux), drop --disable-gpu/
     // --disable-software-rasterizer and add --ignore-gpu-blocklist/
     // --enable-gpu-rasterization.
-    puppeteerArgs: [
+    browserChromiumArgs: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
@@ -134,9 +156,15 @@ const DEFAULTS = {
         "--js-flags=--max-old-space-size=512", // Cap V8 heap at 512MB
     ],
 
-    // CDP command timeout (ms). Increase for slow CPU/disk (ARM SBCs),
-    // or set 0 to disable. Default: 300000 (5 min)
-    puppeteerProtocolTimeout: 300000,
+    // Firefox command line flags. Firefox does not understand the Chromium
+    // flags above, so they are configured separately. Empty by default.
+    browserFirefoxArgs: [
+      "-headless"
+    ],
+
+    // Puppeteer protocol timeout (ms). Applies to both engines. Increase for
+    // slow CPU/disk (ARM SBCs), or set 0 to disable. Default: 300000 (5 min)
+    browserProtocolTimeout: 300000,
 
     // WhatsApp Web auth timeout (ms). Increase for extremely slow devices,
     // or set 0 to disable. Default: 300000 (5 min)

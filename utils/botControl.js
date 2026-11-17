@@ -97,7 +97,7 @@ async function restart(reason = "command") {
   return hooks.restart(reason);
 }
 
-/** Test helper — remove all registered hooks. */
+/** State reset helper — remove all registered hooks (debugging/future tests). */
 function _reset() {
   for (const action of ACTIONS) hooks[action] = null;
 }

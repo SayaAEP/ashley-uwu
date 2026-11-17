@@ -1,6 +1,6 @@
 /**
- * Reconnect backoff — pure helper so the timing can be unit tested without
- * starting WhatsApp.
+ * Reconnect backoff — pure timing helper kept separate from the client
+ * lifecycle so delay logic stays easy to reason about (and test later).
  */
 
 /**

@@ -214,6 +214,23 @@ Concurrency is controlled by `MEDIA_CONCURRENCY` (default 2) and is shared by
 every media plugin. Full API and extension guide:
 [docs/MEDIA.md](MEDIA.md).
 
+### Cross-engine (Firefox) notes
+
+Plugins do **not** need special handling for the Firefox engine:
+
+- Send media by passing a `MessageMedia` to `client.sendMessage(...)` or
+  `message.reply(media, ...)`. `utils/bidiCompat.js` (loaded once by `main.js`)
+  converts it to a plain object for Puppeteer's WebDriver BiDi serializer.
+- Do **not** call `client.pupPage.evaluate(...)` directly to send media. That
+  bypasses the conversion and fails on Firefox with
+  `Custom object serialization not possible`.
+- Only `MessageMedia` is converted. Other values inside the `sendMessage`
+  options object must be plain JSON-serializable values — a custom class
+  instance will fail on Firefox.
+- Do not require or reinstall `utils/bidiCompat` from a plugin; it is installed
+  globally at startup.
+- The media toolkit returns `MessageMedia`, so its API is engine-agnostic.
+
 ---
 
 ## Owner / System Plugins
@@ -434,5 +451,7 @@ Before considering a plugin done:
 - [ ] `usage` uses `config.prefix`, not a hardcoded prefix.
 - [ ] Expected failures reply with `message.reply()` and return.
 - [ ] Media work goes through `utils/media`, never direct FFmpeg/sharp.
+- [ ] Media is sent via `client.sendMessage` / `message.reply` with a
+      `MessageMedia` — never a raw `client.pupPage.evaluate`.
 - [ ] Permissions (`ownerOnly`/`groupOnly`) match the command's purpose.
 - [ ] Tested via chat, `.menu`, and reload/disable (`.unload.js`).

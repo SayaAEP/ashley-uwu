@@ -53,11 +53,32 @@ Turns a WebP sticker into something viewable.
 
 ```js
 const result = await media.stickerToVisual(stickerMedia);
-// { kind: "image", media }     → PNG (alpha preserved)
-// { kind: "animation", media } → MP4 (sent as a GIF)
+// { kind: "image", media }     → PNG (alpha preserved, padding trimmed)
+// { kind: "animation", media } → MP4 (sent as a GIF, padded canvas cropped)
 ```
 
 `kind` is determined from the `ANIM` chunk in the WebP container.
+
+Both outputs are cropped to the sticker's actual content, not WhatsApp's padded
+512×512 canvas. Static images use sharp's `trim()`; animated stickers use the
+union of visible (non-transparent) pixels across every frame, because sharp
+refuses `trim()` on multi-page images.
+
+Animated stickers can be converted to three formats via `options.animation`:
+
+```js
+await media.stickerToVisual(stickerMedia, { animation: "gif" });  // real GIF file
+await media.stickerToVisual(stickerMedia, { animation: "webm" }); // WebM/VP9 with full alpha
+await media.stickerToVisual(stickerMedia, { animation: "mp4" });  // H.264, plays inline
+```
+
+- **GIF** (`image/gif`) keeps 1-bit transparency and remains a real GIF file —
+  but only if sent with `sendMediaAsDocument: true`. Sent as ordinary media,
+  WhatsApp rewrites it to MP4 on its servers.
+- **WebM** (`video/webm`, VP9 + `yuva420p`) keeps the full alpha plane, also to
+  be sent as a document.
+- **MP4** (H.264 + yuv420p) cannot carry alpha, so transparent pixels become a
+  solid colour. It is the only format WhatsApp plays inline in the chat.
 
 ### `media.run(task, meta?)`
 
@@ -80,6 +101,22 @@ through unchanged so plugins can provide specific messages. A real example:
 ```js
 { name: "media", active: 1, queued: 3, concurrency: 2, maxPending: 10 }
 ```
+
+## Engine compatibility
+
+The toolkit returns `MessageMedia` objects. Both browser engines accept them:
+
+- **Chromium** uses Puppeteer's CDP serializer, which handles class instances.
+- **Firefox** uses WebDriver BiDi, which only accepts plain objects.
+
+`utils/bidiCompat.js` (loaded automatically by `main.js`) bridges the gap by
+converting `MessageMedia` instances to plain objects at send time and making
+`instanceof MessageMedia` accept both forms. Plugin and toolkit APIs are
+unchanged.
+
+Send the result through `client.sendMessage()` or `message.reply()`. Do not
+pass media to `client.pupPage.evaluate()` directly — that skips the conversion
+and fails on Firefox.
 
 ## Errors
 
@@ -141,8 +178,9 @@ General rules:
 | File | Contents |
 |---|---|
 | `utils/media/index.js` | Public API, validation, queue, errors |
-| `utils/media/convert.js` | video→WebP, WebP→PNG, WebP→MP4, animation detection |
-| `utils/media/ffmpeg.js` | FFmpeg execution, temp files, timeout, cleanup |
+| `utils/media/convert.js` | video→WebP, WebP→PNG/GIF/MP4/WebM, animation detection, content cropping |
+| `utils/media/ffmpegRunner.js` | FFmpeg execution, temp files, timeout, cleanup |
+| `utils/bidiCompat.js` | Firefox/BiDi media serialization shim |
 | `utils/taskQueue.js` | Generic queue (`createQueue`) for other needs |
 
 The queue is created with `createQueue`, so other features can have their own

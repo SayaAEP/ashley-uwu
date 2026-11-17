@@ -11,49 +11,13 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const mediaToolkit = require('../utils/media');
-
-/**
- * Puppeteer sometimes throws a minified in-page object (e.g. "r: r") instead
- * of a real Error when an evaluate() call fails inside WhatsApp Web's own
- * code. In that case err.message is useless — pull whatever is actually
- * informative off the object so logs are debuggable.
- */
-function describeError(err) {
-    if (!err) return 'unknown error';
-    if (err.message && err.message !== err.name) return err.message;
-    try {
-        return JSON.stringify(err, Object.getOwnPropertyNames(err));
-    } catch {
-        return String(err);
-    }
-}
-
-/**
- * message.getQuotedMessage() occasionally fails on the first attempt because
- * WhatsApp Web's internal message store hasn't indexed the quoted message
- * yet (a timing race, not a real failure). Retry once after a short delay
- * before giving up.
- */
-async function getQuotedMessageWithRetry(message, attempts = 2, delayMs = 400) {
-    let lastErr;
-    for (let i = 0; i < attempts; i++) {
-        try {
-            return await message.getQuotedMessage();
-        } catch (err) {
-            lastErr = err;
-            if (i < attempts - 1) {
-                await new Promise((resolve) => setTimeout(resolve, delayMs));
-            }
-        }
-    }
-    throw lastErr;
-}
+const { describeError, getQuotedMessageWithRetry } = require('../utils/whatsapp');
 
 module.exports = {
     name: 'toimg',
     aliases: ['toimage', 'ti', 'togif', 'tg'],
     description: 'Convert a sticker to an image or GIF',
-    usage: `${config.prefix}toimg — reply to a sticker (add "doc" to send as a lossless PNG document, e.g. ${config.prefix}toimg doc)`,
+    usage: `${config.prefix}toimg — reply to a sticker`,
     category: 'Media',
     ownerOnly: false,
     groupOnly: false,
@@ -98,26 +62,46 @@ module.exports = {
         }
 
         try {
-            const result = await mediaToolkit.stickerToVisual(stickerMedia);
+            // Undocumented escape hatch: "doc" sends the file untouched.
+            //   static  → PNG document (alpha preserved)
+            //   animated → real GIF document (stays GIF; WhatsApp would
+            //              otherwise transcode it to MP4)
+            const asDocument = (args[0] || '').toLowerCase() === 'doc';
+
+            const result = await mediaToolkit.stickerToVisual(stickerMedia, {
+                animation: asDocument ? 'gif' : 'mp4',
+            });
 
             if (result.kind === 'image') {
                 // WhatsApp re-encodes ordinary "photo" sends to JPEG on its own
                 // media pipeline, which flattens transparency onto white.
                 // Sending as a document skips that re-encode entirely, so the
                 // PNG (and its alpha channel) arrives byte-for-byte untouched.
-                const asDocument =
-                    args[0] && ['doc', 'document', 'png'].includes(args[0].toLowerCase());
-
                 await client.sendMessage(
                     message.from,
                     result.media,
-                    asDocument ? { sendMediaAsDocument: true } : {},
+                    asDocument
+                        ? {
+                              sendMediaAsDocument: true,
+                              quotedMessageId: message.id?._serialized,
+                          }
+                        : { quotedMessageId: message.id?._serialized },
                 );
                 return;
             }
 
+            if (asDocument) {
+                await client.sendMessage(message.from, result.media, {
+                    sendMediaAsDocument: true,
+                    quotedMessageId: message.id?._serialized,
+                });
+                return;
+            }
+
+            // Default: inline MP4 (WhatsApp plays it as a GIF in chat).
             await client.sendMessage(message.from, result.media, {
                 sendVideoAsGif: true,
+                quotedMessageId: message.id?._serialized,
             });
         } catch (err) {
             if (err.code === mediaToolkit.CODES.BUSY) {
