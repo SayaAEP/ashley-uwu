@@ -14,7 +14,7 @@
 #   refactor: clean up logger         → Refactors
 #   chore: update dependencies        → Chores
 #   feat!: drop legacy auth           → Features + Breaking Changes
-#   any commit with a "BREAKING CHANGE:" footer → Breaking Changes
+#   "BREAKING CHANGE:" or "BREAKING-CHANGE:" footer → Breaking Changes
 #
 # Bump type "auto" derives the semver bump from the commits:
 #   breaking change → major, feat: → minor, otherwise → patch
@@ -81,7 +81,7 @@ jobs:
 
           if [ "$BUMP" = "auto" ]; then
             if git log $RANGE --pretty=format:"%s" | grep -Eq '^[A-Za-z]+(\([^)]*\))?!:' \
-              || git log $RANGE --pretty=format:"%b" | grep -q 'BREAKING CHANGE:'; then
+              || git log $RANGE --pretty=format:"%b" | grep -qE 'BREAKING[ -]CHANGE:'; then
               BUMP="major"
             elif git log $RANGE --pretty=format:"%s" | grep -Eq '^feat(\([^)]*\))?:'; then
               BUMP="minor"
@@ -182,7 +182,7 @@ jobs:
 
             const isBreaking =
               Boolean(match[3]) ||
-              /(^|\n)BREAKING CHANGE:/.test(commit.body);
+              /(^|\n)BREAKING[ -]CHANGE:/.test(commit.body);
 
             const scope = match[2] ? '**' + match[2] + ':** ' : '';
             const line = '- ' + scope + match[4];

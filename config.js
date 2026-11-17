@@ -157,10 +157,9 @@ const DEFAULTS = {
     ],
 
     // Firefox command line flags. Firefox does not understand the Chromium
-    // flags above, so they are configured separately. Empty by default.
-    browserFirefoxArgs: [
-      "-headless"
-    ],
+    // flags above, so they are configured separately. Empty by default;
+    // Puppeteer adds "--headless" itself when headless is enabled.
+    browserFirefoxArgs: [],
 
     // Puppeteer protocol timeout (ms). Applies to both engines. Increase for
     // slow CPU/disk (ARM SBCs), or set 0 to disable. Default: 300000 (5 min)

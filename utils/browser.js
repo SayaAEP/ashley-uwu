@@ -186,11 +186,13 @@ function detectEngineFromPath(execPath) {
  *
  * @param {"chromium"|"firefox"} engine
  * @param {string} message
+ * @param {boolean} [fatal=false] Stop the process instead of reconnecting
  * @returns {Error}
  */
-function browserError(engine, message) {
+function browserError(engine, message, fatal = false) {
   const err = new Error(message);
   err.engine = engine;
+  if (fatal) err.fatal = true;
   return err;
 }
 
@@ -410,49 +412,74 @@ function writePathToEnv(execPath) {
 // ─── Stale profile lock cleanup ─────────────────────────────
 
 /**
+ * Persistent profile directories for the active auth strategy.
+ *
+ * Mirrors the `userDataDir` set by whatsapp-web.js:
+ *   local  → <auth>/session
+ *   remote → <auth>/RemoteAuth (and RemoteAuth-<clientId>)
+ *   none   → no persistent profile
+ *
+ * @param {object} config
+ * @returns {string[]}
+ */
+function profileDirs(config) {
+  const basePath = resolveProjectPath(
+    config.authDataPath,
+    resolveProjectPath(".wwebjs_auth"),
+  );
+
+  if (config.authStrategy === "local") {
+    return [path.join(basePath, "session")];
+  }
+
+  if (config.authStrategy === "remote") {
+    try {
+      return fs
+        .readdirSync(basePath)
+        .filter(
+          (name) => name === "RemoteAuth" || name.startsWith("RemoteAuth-"),
+        )
+        .map((name) => path.join(basePath, name));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+/**
  * Remove stale browser profile locks.
  *
  * Chromium leaves `SingletonLock` behind after a crash; Firefox leaves `lock`
  * and `.parentlock`. Removing them is only safe because `utils/sessionLock`
  * guarantees this process is the only bot instance.
  *
+ * Only the known profile directories are checked — walking the whole profile
+ * tree on every connect is both slower and unnecessary.
+ *
  * @param {object} config
  * @param {"chromium"|"firefox"} [engine="chromium"]
  */
 function cleanProfileLocks(config, engine = "chromium") {
-  try {
-    const absoluteAuthPath = resolveProjectPath(
-      config.authDataPath,
-      resolveProjectPath(".wwebjs_auth"),
-    );
-    if (!fs.existsSync(absoluteAuthPath)) return;
+  const lockNames =
+    engine === "firefox" ? ["lock", ".parentlock"] : ["SingletonLock"];
 
-    // Both engines share the profile directory; only remove lock files that
-    // belong to the engine being started.
-    const targets =
-      engine === "firefox"
-        ? new Set(["lock", ".parentlock"])
-        : new Set(["SingletonLock"]);
+  for (const dir of profileDirs(config)) {
+    for (const name of lockNames) {
+      const lockPath = path.join(dir, name);
 
-    const walk = (dir) => {
-      const files = fs.readdirSync(dir);
-
-      for (const file of files) {
-        const fullPath = path.join(dir, file);
-        const stat = fs.lstatSync(fullPath);
-
-        if (stat.isDirectory()) {
-          walk(fullPath);
-        } else if (targets.has(file)) {
-          logger.info(`Browser: cleaning stale ${file} → ${fullPath}`);
-          fs.unlinkSync(fullPath);
+      try {
+        fs.unlinkSync(lockPath);
+        logger.info(`Browser: cleaned stale ${name} → ${lockPath}`);
+      } catch (err) {
+        if (err.code !== "ENOENT") {
+          logger.warn(
+            `Browser lock cleanup warning (${lockPath}): ${err.message}`,
+          );
         }
       }
-    };
-
-    walk(absoluteAuthPath);
-  } catch (err) {
-    logger.warn(`Browser lock cleanup warning: ${err.message}`);
+    }
   }
 }
 
@@ -519,6 +546,7 @@ function resolveChromiumPath(config) {
       "  2. Put a browser in browser-bin/<name>/",
       "  3. Install Chrome/Chromium/Edge/Brave",
     ].join("\n"),
+    true,
   );
 }
 
@@ -546,6 +574,7 @@ function resolveFirefoxPath(config) {
       "  2. Put a Firefox binary in browser-bin/<name>/",
       "  3. Install Firefox",
     ].join("\n"),
+    true,
   );
 }
 

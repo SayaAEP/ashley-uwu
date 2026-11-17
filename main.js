@@ -302,7 +302,9 @@ async function startClient() {
     break;
   }
 
-  if (lastErr) lastErr.fatal = true;
+  // Only an initial start failure is permanent. Reconnects must keep retrying
+  // through scheduleReconnect/backoff with the engine that was already chosen.
+  if (!activeBrowser && lastErr) lastErr.fatal = true;
   throw lastErr || new Error("No browser engine could be started.");
 }
 

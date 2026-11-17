@@ -84,7 +84,9 @@ function normalizeOwnerId(value) {
  * Remove a plugin (and its plugin-local dependencies) from the require cache.
  *
  * Dependencies outside `plugins/` (config, utils) are intentionally kept —
- * reloading those mid-flight would create duplicate singletons.
+ * reloading those mid-flight would create duplicate singletons. Consequence:
+ * if a plugin monkey-patches a shared module (for example a whatsapp-web.js
+ * prototype), that patch survives a hot-reload and is never undone.
  *
  * @param {string} modulePath
  * @param {Set<string>} [seen]

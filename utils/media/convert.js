@@ -201,6 +201,24 @@ async function webpToPng(buffer) {
 const ALPHA_THRESHOLD = 8;
 
 /**
+ * Upper bound for animated decode/scan work, measured in alpha pixels.
+ * A normal 5-second 512×512 sticker is around 13M; 64M leaves headroom while
+ * rejecting crafted inputs with extreme frame counts or dimensions.
+ */
+const MAX_ANIMATED_PIXELS = 64 * 1024 * 1024;
+
+/**
+ * @param {number} width
+ * @param {number} pageHeight
+ * @param {number} pages
+ * @returns {boolean}
+ */
+function exceedsAnimationBudget(width, pageHeight, pages) {
+  const total = Number(width) * Number(pageHeight) * Number(pages);
+  return !Number.isFinite(total) || total > MAX_ANIMATED_PIXELS;
+}
+
+/**
  * Union bounding box of all visible (non-transparent) pixels across every
  * frame of an animated image.
  *
@@ -215,6 +233,19 @@ const ALPHA_THRESHOLD = 8;
  *   null when the image is fully transparent
  */
 async function findAnimatedContentBounds(buffer, threshold = ALPHA_THRESHOLD) {
+  // Check the header first so a crafted animation is rejected before the
+  // full raw alpha plane is allocated.
+  const meta = await sharp(buffer, { animated: true }).metadata();
+  const metaWidth = meta.width || 0;
+  const metaPageHeight = meta.pageHeight || meta.height || 0;
+  const metaPages = meta.pages || 1;
+
+  if (exceedsAnimationBudget(metaWidth, metaPageHeight, metaPages)) {
+    throw new Error(
+      `Animated sticker is too large to process (${metaWidth}x${metaPageHeight}, ${metaPages} frames).`,
+    );
+  }
+
   const { data, info } = await sharp(buffer, { animated: true })
     .ensureAlpha()
     .extractChannel("alpha")
@@ -418,4 +449,5 @@ module.exports = {
   webpToMp4,
   webpToWebm,
   findAnimatedContentBounds,
+  exceedsAnimationBudget,
 };
