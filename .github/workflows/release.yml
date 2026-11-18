@@ -3,8 +3,23 @@
 #
 # How to use:
 #   1. Go to Actions > Release > Run workflow
-#   2. Choose version bump type (patch / minor / major)
-#   3. Workflow bumps version, generates changelog, creates GitHub Release
+#   2. Select branch "dev" in "Use workflow from"
+#   3. Choose version bump type (auto / patch / minor / major)
+#   4. Workflow bumps version, generates changelog, then pushes the bump
+#      commit, "main" and the version tag in ONE atomic push, and only after
+#      that creates the GitHub Release
+#
+# Branch flow (one direction, no back-sync needed):
+#   dev → (Release: bump + tag) → main (fast-forward)
+#
+# Safety rules:
+#   - Fails with a clear error when started from any branch other than "dev"
+#   - Fails before changing anything if "main" has commits that "dev" lacks
+#     (fix: git switch dev && git merge origin/main && git push origin dev)
+#   - Refuses to bump twice when the newest commit is already a release bump
+#     (an earlier run pushed the bump but failed to create the Release)
+#   - The push is atomic: if dev, main or the tag is rejected, nothing changes
+#   - Only one release can run at a time
 #
 # Commit format (Conventional Commits 1.0.0):
 #   feat: add echo plugin             → Features
@@ -18,6 +33,7 @@
 #
 # Bump type "auto" derives the semver bump from the commits:
 #   breaking change → major, feat: → minor, otherwise → patch
+# The new version is always computed from the version in package.json.
 
 name: Release
 
@@ -38,10 +54,23 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Require the dev branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/dev" ]; then
+            echo "::error::Release must be run from the dev branch (got: $REF). Choose 'dev' in 'Use workflow from'."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -58,6 +87,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Verify main can be fast-forwarded
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "::error::main has commits that dev does not. Run 'git switch dev && git merge origin/main && git push origin dev', then re-run the release."
+            exit 1
+          fi
+
+      - name: Refuse to bump twice
+        run: |
+          SUBJECT=$(git log -1 --pretty=format:"%s")
+          if echo "$SUBJECT" | grep -Eq '^chore: bump version to v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::The newest commit is already a release bump ($SUBJECT). A previous run probably pushed it but failed to create the GitHub Release. Create the Release manually from the existing tag, or add a new commit before re-running."
+            exit 1
+          fi
+
       - name: Get current version
         id: current
         run: |
@@ -67,8 +112,10 @@ jobs:
 
       - name: Bump version
         id: bump
+        env:
+          CURRENT: ${{ steps.current.outputs.version }}
+          BUMP_INPUT: ${{ inputs.bump }}
         run: |
-          CURRENT="${{ steps.current.outputs.version }}"
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
           if [ -z "$PREVIOUS_TAG" ]; then
@@ -77,7 +124,7 @@ jobs:
             RANGE="${PREVIOUS_TAG}..HEAD"
           fi
 
-          BUMP="${{ inputs.bump }}"
+          BUMP="$BUMP_INPUT"
 
           if [ "$BUMP" = "auto" ]; then
             if git log $RANGE --pretty=format:"%s" | grep -Eq '^[A-Za-z]+(\([^)]*\))?!:' \
@@ -113,8 +160,10 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Update version in package.json
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
         run: |
-          npm version ${{ steps.bump.outputs.version }} --no-git-tag-version
+          npm version "$NEW_VERSION" --no-git-tag-version
 
       - name: Generate changelog
         id: changelog
@@ -213,16 +262,20 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> $GITHUB_OUTPUT
 
-      - name: Commit version bump
+      - name: Commit, tag and push atomically
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
         run: |
           git add package.json
-          git commit -m "chore: bump version to v${{ steps.bump.outputs.version }}"
-          git push
+          git commit -m "chore: bump version to v${NEW_VERSION}"
+          git tag "v${NEW_VERSION}"
 
-      - name: Create tag
-        run: |
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push origin "v${{ steps.bump.outputs.version }}"
+          # One atomic push: if dev, main (fast-forward) or the tag is
+          # rejected, none of the three refs change.
+          git push --atomic origin \
+            HEAD:refs/heads/dev \
+            HEAD:refs/heads/main \
+            "refs/tags/v${NEW_VERSION}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
